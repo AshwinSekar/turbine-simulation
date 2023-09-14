@@ -1,5 +1,6 @@
 use std::{collections::HashSet, convert::identity};
 
+use clap::{App, crate_name, crate_description, value_t_or_exit, Arg};
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use statistical::{mean, median};
@@ -26,20 +27,60 @@ impl Default for Node {
 }
 
 fn main() {
-    // turbine_recovery(0.25);
-    // turbine_recovery(0.33);
-    // turbine_recovery(0.5);
-    turbine_recovery(0.66);
-    // turbine_recovery(0.75);
-    // turbine_recovery(1.0);
+    let matches = App::new(crate_name!())
+        .about(crate_description!())
+        .arg(
+            Arg::with_name("online_percent")
+            .long("online-percent")
+            .takes_value(true)
+            .default_value("66")
+            .help("Percentage of nodes that are online for the simulation")
+        )
+        .arg(
+            Arg::with_name("malicious_percent")
+            .long("malicious-percent")
+            .takes_value(true)
+            .default_value("0")
+            .help("Percentage of nodes that are malicious, will only be sampled from online nodes")
+        )
+        .arg(
+            Arg::with_name("threads")
+            .long("threads")
+            .takes_value(true)
+            .default_value("10")
+            .help("Number of threads")
+        )
+        .arg(
+            Arg::with_name("trials")
+            .long("trials")
+            .takes_value(true)
+            .default_value("10000")
+            .help("Number of trials to simulate")
+        ).get_matches();
+    let online_p = value_t_or_exit!(matches.value_of("online_percent"), f64) / 100.0;
+    let _threads = value_t_or_exit!(matches.value_of("threads"), usize);
+    let trials = value_t_or_exit!(matches.value_of("trials"), usize);
+    let malicious_p = value_t_or_exit!(matches.value_of("malicious_percent"), f64) / 100.0;
+    turbine_recovery(trials, online_p, malicious_p);
 }
 
-fn turbine_recovery(p: f64) {
-    let online_nodes: usize = (p * (NUM_NODES as f64)) as usize;
-    println!("Running simulation with {} / {} nodes online, {L1_SIZE} l1 nodes, {L2_NODES} l2 nodes in neighborhoods of {L2_SIZE}", online_nodes, NUM_NODES);
+fn turbine_recovery(trials: usize, online_p: f64, malicious_p: f64) {
+    let online_nodes: usize = (online_p * (NUM_NODES as f64)) as usize;
+    let malicious_nodes: usize = (malicious_p * (online_nodes as f64)) as usize;
+    println!(
+        "Running simulation with {} / {} nodes online of which {} are malicious,
+        {L1_SIZE} l1 nodes,
+        {L2_NODES} l2 nodes in neighborhoods of {L2_SIZE}",
+        online_nodes,
+        NUM_NODES,
+        malicious_nodes,
+    );
     let online = |node: usize| node < online_nodes;
+    // Malicious nodes are always online
+    let malicious = |node: usize| node < malicious_nodes;
     let mut results: Vec<f64> = vec![];
-    for block in 1..1_000_000 {
+    let mut non_malicious_results: Vec<f64> = vec![];
+    for block in 1..trials {
         let mut nodes = [Node::default(); NUM_NODES];
         let mut rounds = 0;
         loop {
@@ -65,8 +106,8 @@ fn turbine_recovery(p: f64) {
                 // L1 transmits to L2
                 for i in 1..(1 + L1_SIZE) {
                     let l1_node = index[i];
-                    // If it's online and has the shred
-                    if online(l1_node) && nodes[l1_node].shreds[shred] {
+                    // If it's online and has the shred or it's malicious
+                    if (online(l1_node) && nodes[l1_node].shreds[shred]) || malicious(l1_node) {
                         let l2_start = (1 + L1_SIZE) + i * L2_SIZE;
                         for &l2_node in &index[l2_start..(l2_start + L2_SIZE)] {
                             if online(l2_node) && !nodes[l2_node].shreds[shred] {
@@ -83,11 +124,11 @@ fn turbine_recovery(p: f64) {
             if might_recover.is_empty() {
                 break;
             }
-            println!(
-                "    round {} potentially recovering {}",
-                rounds,
-                might_recover.len()
-            );
+            // println!(
+            //     "    round {} potentially recovering {}",
+            //     rounds,
+            //     might_recover.len()
+            // );
             let mut sizes = vec![];
             let mut recovered = 0;
             for node in might_recover {
@@ -100,30 +141,37 @@ fn turbine_recovery(p: f64) {
                     }
                 }
             }
-            println!(
-                "    round {} recovered {recovered} median shreds received {}",
-                rounds,
-                median(&sizes)
-            );
+            // println!(
+            //     "    round {} recovered {recovered} median shreds received {}",
+            //     rounds,
+            //     median(&sizes)
+            // );
         }
 
-        // How many L2 nodes recovered the block
-        let mut l2_recovered = 0;
-        for node in (1 + L1_SIZE)..NUM_NODES {
+        // How many nodes recovered the block
+        let mut recovered = 0;
+        let mut non_malicious_recovered = 0;
+        for node in 0..NUM_NODES {
             if nodes[node]
                 .shreds
                 .into_iter()
                 .take(DATA_SHREDS)
                 .all(identity)
             {
-                l2_recovered += 1;
+                recovered += 1;
+                if !malicious(node) {
+                    non_malicious_recovered += 1;
+                }
             }
         }
-        results.push((l2_recovered as f64) / (L2_NODES as f64));
+        results.push((recovered as f64) / (NUM_NODES as f64));
+        non_malicious_results.push((non_malicious_recovered as f64) / (NUM_NODES as f64));
         println!(
-            "{p}: Median {} Mean {} Rounds {rounds}",
+            "{online_p}: Median {} {} Mean {} {} Rounds {rounds}",
             median(&results),
-            mean(&results)
+            median(&non_malicious_results),
+            mean(&results),
+            mean(&non_malicious_results),
         );
     }
 }
