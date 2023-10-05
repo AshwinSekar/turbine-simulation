@@ -54,7 +54,7 @@ fn main() {
             Arg::with_name("trials")
             .long("trials")
             .takes_value(true)
-            .default_value("10000")
+            .default_value("1000")
             .help("Number of trials to simulate")
         ).get_matches();
     let online_p = value_t_or_exit!(matches.value_of("online_percent"), f64) / 100.0;
@@ -66,7 +66,7 @@ fn main() {
 
 fn turbine_recovery(trials: usize, online_p: f64, malicious_p: f64) {
     let online_nodes: usize = (online_p * (NUM_NODES as f64)) as usize;
-    let malicious_nodes: usize = (malicious_p * (online_nodes as f64)) as usize;
+    let malicious_nodes: usize = (malicious_p * (NUM_NODES as f64)) as usize;
     println!(
         "Running simulation with {} / {} nodes online of which {} are malicious,
         {L1_SIZE} l1 nodes,
@@ -156,7 +156,7 @@ fn turbine_recovery(trials: usize, online_p: f64, malicious_p: f64) {
                 .shreds
                 .into_iter()
                 .take(DATA_SHREDS)
-                .all(identity)
+                .all(identity) || malicious(node)
             {
                 recovered += 1;
                 if !malicious(node) {
@@ -166,12 +166,12 @@ fn turbine_recovery(trials: usize, online_p: f64, malicious_p: f64) {
         }
         results.push((recovered as f64) / (NUM_NODES as f64));
         non_malicious_results.push((non_malicious_recovered as f64) / (NUM_NODES as f64));
-        println!(
-            "{online_p}: Median {} {} Mean {} {} Rounds {rounds}",
-            median(&results),
-            median(&non_malicious_results),
-            mean(&results),
-            mean(&non_malicious_results),
-        );
     }
+    println!(
+        "Median recovered: {}, Median non malicious recovered: {} Mean recovered: {} Mean non malicious recovered: {}",
+        median(&results),
+        median(&non_malicious_results),
+        mean(&results),
+        mean(&non_malicious_results),
+    );
 }
